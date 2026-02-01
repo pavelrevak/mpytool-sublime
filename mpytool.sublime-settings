@@ -1,5 +1,3 @@
 {
-    "mpytool_path": "mpytool",
-    "default_exclude": [".*", "*.pyc"],
-    "upload_on_save": false
+    "mpytool_path": "mpytool"
 }
