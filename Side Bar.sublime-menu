@@ -1,0 +1,41 @@
+[
+    {"caption": "-", "id": "mpytool_separator"},
+    {
+        "caption": "MicroPython",
+        "children": [
+            {
+                "caption": "Copy to Device...",
+                "command": "mpy_copy_to_device",
+                "args": {"paths": []}
+            },
+            {"caption": "-"},
+            {
+                "caption": "New Project...",
+                "command": "mpy_new_project",
+                "args": {"paths": []}
+            },
+            {
+                "caption": "Set as Active Project",
+                "command": "mpy_set_active",
+                "args": {"paths": []}
+            },
+            {"caption": "-"},
+            {
+                "caption": "Add to Deploy",
+                "command": "mpy_add_to_deploy",
+                "args": {"paths": []}
+            },
+            {
+                "caption": "Add to Exclude",
+                "command": "mpy_add_to_exclude",
+                "args": {"paths": []}
+            },
+            {"caption": "-"},
+            {
+                "caption": "Add to Other Project...",
+                "command": "mpy_add_to_other_project",
+                "args": {"paths": []}
+            }
+        ]
+    }
+]

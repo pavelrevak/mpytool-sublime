@@ -1,0 +1,4 @@
+[
+    {"keys": ["ctrl+shift+d"], "command": "mpy_deploy"},
+    {"keys": ["ctrl+shift+l"], "command": "mpy_tree"}
+]

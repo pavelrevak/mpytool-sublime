@@ -1,0 +1,16 @@
+[
+    {"caption": "MPY: New Project...", "command": "mpy_new_project"},
+    {"caption": "MPY: Deploy to Device", "command": "mpy_deploy"},
+    {"caption": "MPY: Sync to Device", "command": "mpy_sync"},
+    {"caption": "MPY: Backup Device", "command": "mpy_backup"},
+    {"caption": "MPY: Restore Backup", "command": "mpy_restore"},
+    {"caption": "MPY: List Files", "command": "mpy_tree"},
+    {"caption": "MPY: Device Info", "command": "mpy_info"},
+    {"caption": "MPY: Erase Device", "command": "mpy_erase_device"},
+    {"caption": "MPY: Reset Device", "command": "mpy_reset"},
+    {"caption": "MPY: Reset and Monitor", "command": "mpy_reset", "args": {"monitor": true}},
+    {"caption": "MPY: Monitor", "command": "mpy_monitor"},
+    {"caption": "MPY: Open REPL", "command": "mpy_repl"},
+    {"caption": "MPY: Stop", "command": "mpy_stop"},
+    {"caption": "MPY: Select Project...", "command": "mpy_select_project"}
+]

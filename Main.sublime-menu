@@ -1,0 +1,24 @@
+[
+    {
+        "id": "tools",
+        "children": [
+            {
+                "caption": "MicroPython",
+                "children": [
+                    {"caption": "Upload Project", "command": "mpy_upload"},
+                    {"caption": "Upload Current File", "command": "mpy_upload_current"},
+                    {"caption": "-"},
+                    {"caption": "Download from Device", "command": "mpy_download"},
+                    {"caption": "List Files", "command": "mpy_tree"},
+                    {"caption": "Device Info", "command": "mpy_info"},
+                    {"caption": "-"},
+                    {"caption": "Run Current File", "command": "mpy_run"},
+                    {"caption": "Reset Device", "command": "mpy_reset"},
+                    {"caption": "Open REPL", "command": "mpy_repl"},
+                    {"caption": "-"},
+                    {"caption": "Select Project...", "command": "mpy_select_project"}
+                ]
+            }
+        ]
+    }
+]
