@@ -1,7 +1,6 @@
 __pycache__
-build
-dist
-*.egg-info
 *.md
 !README*.md
-scripts/
+.*
+!.gitignore
+!.sublimeignore

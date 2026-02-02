@@ -1,5 +1,6 @@
 [
     {"caption": "MPY: New Project...", "command": "mpy_new_project"},
+    {"caption": "MPY: Project Settings", "command": "mpy_project_settings"},
     {"caption": "MPY: Deploy to Device", "command": "mpy_deploy"},
     {"caption": "MPY: Sync to Device", "command": "mpy_sync"},
     {"caption": "MPY: Backup Device", "command": "mpy_backup"},

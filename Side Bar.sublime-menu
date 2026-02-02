@@ -15,6 +15,10 @@
                 "args": {"paths": []}
             },
             {
+                "caption": "Project Settings",
+                "command": "mpy_project_settings"
+            },
+            {
                 "caption": "Set as Active Project",
                 "command": "mpy_set_active",
                 "args": {"paths": []}

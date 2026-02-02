@@ -5,17 +5,24 @@
             {
                 "caption": "MicroPython",
                 "children": [
-                    {"caption": "Upload Project", "command": "mpy_upload"},
-                    {"caption": "Upload Current File", "command": "mpy_upload_current"},
+                    {"caption": "New Project...", "command": "mpy_new_project"},
+                    {"caption": "Project Settings", "command": "mpy_project_settings"},
                     {"caption": "-"},
-                    {"caption": "Download from Device", "command": "mpy_download"},
+                    {"caption": "Deploy to Device", "command": "mpy_deploy"},
+                    {"caption": "Sync to Device", "command": "mpy_sync"},
+                    {"caption": "-"},
+                    {"caption": "Backup Device", "command": "mpy_backup"},
+                    {"caption": "Restore Backup", "command": "mpy_restore"},
                     {"caption": "List Files", "command": "mpy_tree"},
                     {"caption": "Device Info", "command": "mpy_info"},
+                    {"caption": "Erase Device", "command": "mpy_erase_device"},
                     {"caption": "-"},
-                    {"caption": "Run Current File", "command": "mpy_run"},
                     {"caption": "Reset Device", "command": "mpy_reset"},
+                    {"caption": "Reset and Monitor", "command": "mpy_reset", "args": {"monitor": true}},
+                    {"caption": "Monitor", "command": "mpy_monitor"},
                     {"caption": "Open REPL", "command": "mpy_repl"},
                     {"caption": "-"},
+                    {"caption": "Stop", "command": "mpy_stop"},
                     {"caption": "Select Project...", "command": "mpy_select_project"}
                 ]
             }

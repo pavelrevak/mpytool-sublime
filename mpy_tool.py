@@ -52,6 +52,12 @@ def get_project_root(mpyproject_path):
     return os.path.dirname(mpyproject_path)
 
 
+def get_project_name(mpyproject_path):
+    """Return project name from config or directory name as fallback"""
+    config = load_mpyproject(mpyproject_path)
+    return config.get('name') or os.path.basename(os.path.dirname(mpyproject_path))
+
+
 class MpyContext:
     """Context for current MicroPython project"""
 
@@ -153,14 +159,14 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
         panel = self.get_panel()
         panel.run_command('append', {'characters': text})
 
-    def run_mpytool(self, args, cwd=None):
+    def run_mpytool(self, args, cwd=None, clear=True):
         """Run mpytool in background thread"""
         settings = sublime.load_settings('mpytool.sublime-settings')
         mpytool_path = settings.get('mpytool_path', 'mpytool')
 
         cmd = [mpytool_path] + args
 
-        self.get_panel(clear=True)
+        self.get_panel(clear=clear)
         self.show_panel()
         self.append_output(f"$ {' '.join(cmd)}\n")
 
@@ -264,6 +270,11 @@ class MpySyncCommand(MpyToolCommand):
         root = get_project_root(mpyproject)
         port = config.get('port', 'auto')
 
+        # Show which project is being used
+        self.get_panel(clear=True)
+        self.show_panel()
+        self.append_output(f"Project: {mpyproject}\n")
+
         # Get deploy config: {"/": ["./"], "/lib/": ["../x.py"]}
         # Default: deploy entire project to /
         deploy = config.get('deploy') or {"/": ["./"]}
@@ -305,7 +316,7 @@ class MpySyncCommand(MpyToolCommand):
         if monitor:
             args.extend(['--', 'monitor'])
 
-        self.run_mpytool(args, cwd=root)
+        self.run_mpytool(args, cwd=root, clear=False)
 
 
 class MpyDeployCommand(MpySyncCommand):
@@ -479,7 +490,7 @@ class MpyEraseDeviceCommand(MpyToolCommand):
         if port != 'auto':
             args.extend(['-p', port])
 
-        args.extend(['rm', '/'])
+        args.extend(['sreset', '--', 'rm', '/'])
 
         self.run_mpytool(args)
 
@@ -641,14 +652,31 @@ class MpyNewProjectCommand(sublime_plugin.WindowCommand):
 
         sublime.status_message(f"Created {path}")
 
+    def _get_current_directory(self, paths=None):
+        """Get directory from paths or current context"""
+        if paths:
+            path = paths[0]
+            return path if os.path.isdir(path) else os.path.dirname(path)
+
+        view = self.window.active_view()
+        if view and view.file_name():
+            return os.path.dirname(view.file_name())
+        if self.window.folders():
+            return self.window.folders()[0]
+        return None
+
+    def is_enabled(self, paths=None):
+        """Disable if .mpyproject already exists in current directory"""
+        directory = self._get_current_directory(paths)
+        if not directory:
+            return True
+        return find_mpyproject(directory) is None
+
     def is_visible(self, paths=None):
-        """Show only if no .mpyproject exists in path or parents"""
+        """Show only if no .mpyproject exists in path or parents (sidebar)"""
         if not paths:
             return True  # Always show in command palette
-
-        path = paths[0]
-        directory = path if os.path.isdir(path) else os.path.dirname(path)
-        return find_mpyproject(directory) is None
+        return self.is_enabled(paths)
 
 
 def save_mpyproject(path, config):
@@ -913,8 +941,7 @@ class MpySetActiveCommand(sublime_plugin.WindowCommand):
             view = self.window.active_view()
             if view:
                 view.run_command('mpy_update_status')
-            project_name = os.path.basename(os.path.dirname(mpyproject))
-            sublime.status_message(f"Active project: {project_name}")
+            sublime.status_message(f"Active project: {get_project_name(mpyproject)}")
 
     def _get_mpyproject(self, path):
         """Get .mpyproject path from file or folder"""
@@ -932,6 +959,20 @@ class MpySetActiveCommand(sublime_plugin.WindowCommand):
         if not paths:
             return False
         return self._get_mpyproject(paths[0]) is not None
+
+
+class MpyProjectSettingsCommand(sublime_plugin.WindowCommand):
+    """Open .mpyproject file"""
+
+    def run(self):
+        view = self.window.active_view()
+        mpyproject = MpyContext.get(view)
+        if mpyproject:
+            self.window.open_file(mpyproject)
+
+    def is_enabled(self):
+        view = self.window.active_view()
+        return MpyContext.get(view) is not None
 
 
 class MpySelectProjectCommand(sublime_plugin.WindowCommand):
@@ -966,11 +1007,11 @@ class MpySelectProjectCommand(sublime_plugin.WindowCommand):
         # Project options
         for p in projects:
             project_dir = os.path.dirname(p)
-            project_name = os.path.basename(project_dir)
+            name = get_project_name(p)
             if p == current and is_manual:
-                label = f"● {project_name}"
+                label = f"● {name}"
             else:
-                label = f"  {project_name}"
+                label = f"  {name}"
             items.append([label, project_dir])
             self._projects.append(p)
 
@@ -997,8 +1038,7 @@ class MpyUpdateStatusCommand(sublime_plugin.TextCommand):
         mpyproject = MpyContext.get(self.view)
 
         if mpyproject:
-            project_name = os.path.basename(os.path.dirname(mpyproject))
-            self.view.set_status('mpytool', f'MPY: {project_name}')
+            self.view.set_status('mpytool', f'MPY: {get_project_name(mpyproject)}')
         else:
             self.view.erase_status('mpytool')
 
