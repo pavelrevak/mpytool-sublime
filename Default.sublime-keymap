@@ -1,5 +1,4 @@
 [
     {"keys": ["ctrl+alt+u"], "command": "mpy_deploy"},
-    {"keys": ["ctrl+alt+l"], "command": "mpy_tree"},
     {"keys": ["ctrl+alt+m"], "command": "mpy_monitor"}
 ]

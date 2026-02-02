@@ -77,7 +77,6 @@ All commands available via Command Palette (`Cmd+Shift+P`) with `MPY:` prefix.
 | macOS | Windows/Linux | Command |
 |-------|---------------|---------|
 | `Cmd+Option+U` | `Ctrl+Alt+U` | Deploy to Device |
-| `Cmd+Option+L` | `Ctrl+Alt+L` | List Files |
 | `Cmd+Option+M` | `Ctrl+Alt+M` | Monitor |
 
 ## Sidebar Menu
