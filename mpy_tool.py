@@ -517,12 +517,14 @@ class MpyReplCommand(MpyToolCommand):
         if self._try_terminus(cmd):
             return
 
-        # Fallback to external terminal
+        # Fallback to external terminal (platform-specific)
         if sublime.platform() == 'osx':
             script = f'tell app "Terminal" to do script "{" ".join(cmd)}"'
             subprocess.run(['osascript', '-e', script])
         elif sublime.platform() == 'linux':
             subprocess.Popen(['x-terminal-emulator', '-e'] + cmd)
+        elif sublime.platform() == 'windows':
+            subprocess.Popen(['cmd', '/c', 'start', 'cmd', '/k'] + cmd)
 
     def _try_terminus(self, cmd):
         """Try to open REPL in Terminus. Returns True if successful."""
