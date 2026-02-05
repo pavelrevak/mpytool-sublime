@@ -172,6 +172,7 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
         """Append text to output panel"""
         panel = self.get_panel()
         panel.run_command('append', {'characters': text})
+        panel.show(panel.size())
 
     def run_mpytool(self, args, cwd=None, clear=True):
         """Run mpytool in background thread"""
@@ -195,17 +196,24 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
             # Stop any running process first
             MpyProcessManager.stop()
 
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+
             process = subprocess.Popen(
                 cmd,
                 cwd=cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=env,
                 text=True)
 
             MpyProcessManager.set(process)
 
             output_lines = []
-            for line in process.stdout:
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
                 output_lines.append(line)
                 sublime.set_timeout(
                     lambda l=line: self.append_output(l), 0)
@@ -610,6 +618,9 @@ class MpyResetCommand(MpyToolCommand):
 
     def run(self, monitor=False):
         self._monitor = monitor
+        if monitor:
+            self._on_select(0)
+            return
         items = [
             sublime.QuickPanelItem(
                 mode[0], annotation=mode[2] if len(mode) > 2 else "")
