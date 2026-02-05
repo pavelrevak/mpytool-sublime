@@ -102,7 +102,7 @@ Create `.mpyproject` in your project root:
     "name": "my-project",
     "port": "auto",
     "deploy": {
-        "/": ["./"]
+        "": ["./"]
     },
     "exclude": ["__pycache__", "*.pyc", ".backup"]
 }
@@ -115,24 +115,47 @@ Create `.mpyproject` in your project root:
 | `deploy` | Map of device paths → local sources |
 | `exclude` | Patterns to exclude from upload |
 
+### Deploy Format
+
+Device paths use mpytool `:` prefix convention — paths are relative to device CWD
+(default `/`). Use `/` prefix for absolute paths (e.g. `"/lib/"` → `:/lib/`).
+
+Deploy supports two modes based on destination path:
+
+**Directory mode** - destination is `""` or ends with `/`:
+```json
+"deploy": {
+    "": ["./"],                    // upload to device CWD
+    "lib/": ["mylib/", "utils.py"] // upload multiple items to lib/
+}
+```
+
+**Rename mode** - destination doesn't end with `/`:
+```json
+"deploy": {
+    "main.py": "src/app.py",       // upload and rename file
+    "lib/driver": "../drivers/v2"  // upload and rename directory
+}
+```
+
 ### Deploy Examples
 
 ```json
-// Upload entire project to device root
+// Upload entire project to device CWD
 "deploy": {
-    "/": ["./"]
+    "": ["./"]
 }
 
 // Upload specific files to specific locations
 "deploy": {
-    "/": ["main.py", "boot.py"],
-    "/lib/": ["lib/", "../shared/utils.py"]
+    "": ["main.py", "boot.py"],
+    "lib/": ["lib/", "../shared/utils.py"]
 }
 
-// Upload external library
+// Upload with rename
 "deploy": {
-    "/": ["./"],
-    "/lib/": ["../external-lib/"]
+    "": ["./"],
+    "config.json": "config_prod.json"
 }
 ```
 

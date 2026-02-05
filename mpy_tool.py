@@ -12,6 +12,7 @@ import threading
 import json
 import os
 import re
+import shlex
 
 
 def find_mpyproject(path):
@@ -34,7 +35,7 @@ def find_mpyproject(path):
 
 
 def load_mpyproject(path):
-    """Load .mpyproject, return {} if empty"""
+    """Load .mpyproject, return {} if empty, None on JSON error"""
     try:
         with open(path, 'r') as f:
             content = f.read().strip()
@@ -43,7 +44,10 @@ def load_mpyproject(path):
             # Remove trailing commas (not valid JSON but common)
             content = re.sub(r',\s*([}\]])', r'\1', content)
             return json.loads(content)
-    except (json.JSONDecodeError, IOError):
+    except json.JSONDecodeError as e:
+        print(f"MpyTool: Invalid JSON in {path}: {e}")
+        return None
+    except IOError:
         return {}
 
 
@@ -55,7 +59,9 @@ def get_project_root(mpyproject_path):
 def get_project_name(mpyproject_path):
     """Return project name from config or directory name as fallback"""
     config = load_mpyproject(mpyproject_path)
-    return config.get('name') or os.path.basename(os.path.dirname(mpyproject_path))
+    if config:
+        return config.get('name') or os.path.basename(os.path.dirname(mpyproject_path))
+    return os.path.basename(os.path.dirname(mpyproject_path))
 
 
 class MpyContext:
@@ -134,6 +140,14 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
             return None, None
 
         config = load_mpyproject(mpyproject)
+        if config is None:
+            # JSON parse error - show in panel and abort
+            self.get_panel(clear=True)
+            self.show_panel()
+            self.append_output(f"Error: Invalid JSON in {mpyproject}\n")
+            self.append_output("Check Sublime console for details (View → Show Console)\n")
+            return None, None
+
         return mpyproject, config
 
     def get_port(self):
@@ -168,7 +182,7 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
 
         self.get_panel(clear=clear)
         self.show_panel()
-        self.append_output(f"$ {' '.join(cmd)}\n")
+        self.append_output(f"$ {shlex.join(cmd)}\n")
 
         thread = threading.Thread(
             target=self._run_process,
@@ -277,7 +291,7 @@ class MpySyncCommand(MpyToolCommand):
 
         # Get deploy config: {"/": ["./"], "/lib/": ["../x.py"]}
         # Default: deploy entire project to /
-        deploy = config.get('deploy') or {"/": ["./"]}
+        deploy = config.get('deploy') or {"": ["./"]}
 
         args = []
 
@@ -290,19 +304,44 @@ class MpySyncCommand(MpyToolCommand):
             args.extend(['-e', pattern])
 
         # Build command: cp src1 src2 :dest1 -- cp src3 :dest2 -- ...
+        # Directory mode (dest is "" or ends with /): sources is list
+        # Rename mode (dest doesn't end with /): sources is single string
         first = True
         for dest, sources in deploy.items():
             if not sources:
                 continue
 
-            # Normalize dest
-            if not dest.startswith('/'):
-                dest = '/' + dest
+            is_dir_mode = dest == "" or dest.endswith("/")
+
+            # Validate config
+            if is_dir_mode and not isinstance(sources, list):
+                self.append_output(
+                    f"Error in deploy config: '{dest}' is directory, "
+                    f"sources must be list (multiple files), got string\n")
+                return
+            if not is_dir_mode and not isinstance(sources, str):
+                self.append_output(
+                    f"Error in deploy config: '{dest}' is rename, "
+                    f"sources must be string (single file), got list\n")
+                return
+            if is_dir_mode and any(not s for s in sources):
+                self.append_output(
+                    f"Error in deploy config: '{dest}' has empty source path\n")
+                return
+            if not is_dir_mode and not sources:
+                self.append_output(
+                    f"Error in deploy config: '{dest}' has empty source path\n")
+                return
 
             if not first:
                 args.append('--')
             args.append('cp')
-            args.extend(sources)
+
+            if is_dir_mode:
+                args.extend(dict.fromkeys(sources))
+            else:
+                args.append(sources)
+
             args.append(f':{dest}')
             first = False
 
@@ -390,7 +429,7 @@ class MpyBackupCommand(MpyToolCommand):
         if self._port != 'auto':
             args.extend(['-p', self._port])
 
-        args.extend(['cp', ':/', path])
+        args.extend(['cp', ':', path])
 
         self.run_mpytool(args)
 
@@ -440,7 +479,7 @@ class MpyRestoreCommand(MpyToolCommand):
             args.extend(['-p', self._port])
 
         # Upload contents of backup folder to device root
-        args.extend(['cp', path + '/', ':/'])
+        args.extend(['cp', path + '/', ':'])
 
         self.run_mpytool(args)
 
@@ -490,7 +529,7 @@ class MpyEraseDeviceCommand(MpyToolCommand):
         if port != 'auto':
             args.extend(['-p', port])
 
-        args.extend(['sreset', '--', 'rm', '/'])
+        args.extend(['rm', ':'])
 
         self.run_mpytool(args)
 
@@ -560,7 +599,28 @@ class MpyReplCommand(MpyToolCommand):
 class MpyResetCommand(MpyToolCommand):
     """Reset device"""
 
+    _reset_modes = [
+        ["Soft", "", "CTRL-D in REPL"],
+        ["RAW", "--raw", "CTRL-D in RAW-REPL"],
+        ["Machine", "--machine", "machine.reset()"],
+        ["RTS", "--rts", "Pulse on RTS signal"],
+        ["Bootloader", "--boot", "machine.bootloader()"],
+        ["Bootloader using DTR", "--dtr-boot", "Pulse on DTR signal"],
+    ]
+
     def run(self, monitor=False):
+        self._monitor = monitor
+        items = [
+            sublime.QuickPanelItem(
+                mode[0], annotation=mode[2] if len(mode) > 2 else "")
+            for mode in self._reset_modes
+        ]
+        self.window.show_quick_panel(items, self._on_select)
+
+    def _on_select(self, index):
+        if index < 0:
+            return
+
         port = self.get_port()
 
         args = []
@@ -569,8 +629,58 @@ class MpyResetCommand(MpyToolCommand):
 
         args.append('reset')
 
-        if monitor:
+        flag = self._reset_modes[index][1]
+        if flag:
+            args.append(flag)
+
+        if self._monitor:
             args.extend(['--', 'monitor'])
+
+        self.run_mpytool(args)
+
+
+class MpyChdirCommand(MpyToolCommand):
+    """Change device working directory"""
+
+    def run(self):
+        self._port = self.get_port()
+        thread = threading.Thread(target=self._get_cwd)
+        thread.start()
+
+    def _get_cwd(self):
+        settings = sublime.load_settings('mpytool.sublime-settings')
+        mpytool_path = settings.get('mpytool_path', 'mpytool')
+
+        cmd = [mpytool_path]
+        if self._port != 'auto':
+            cmd.extend(['-p', self._port])
+        cmd.append('pwd')
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10)
+            cwd = result.stdout.strip()
+        except Exception:
+            cwd = ""
+
+        sublime.set_timeout(lambda: self._show_input(cwd), 0)
+
+    def _show_input(self, cwd):
+        self.window.show_input_panel(
+            "Device CWD:",
+            cwd,
+            self._on_done,
+            None,
+            None)
+
+    def _on_done(self, path):
+        if not path:
+            return
+
+        args = []
+        if self._port != 'auto':
+            args.extend(['-p', self._port])
+        args.extend(['cd', ':' + path])
 
         self.run_mpytool(args)
 
@@ -688,30 +798,55 @@ def save_mpyproject(path, config):
         f.write('\n')
 
 
-def add_to_deploy(mpyproject, rel_path, dest, add_default=False):
-    """Add file/folder to deploy config"""
+def add_to_deploy(mpyproject, rel_path, dest, is_src_dir=False, add_default=False):
+    """Add file/folder to deploy config.
+
+    Directory mode (dest is "" or ends with /): sources is list
+    Rename mode (dest doesn't end with /): sources is single string
+    """
     config = load_mpyproject(mpyproject)
+    if config is None:
+        sublime.status_message("Error: Invalid JSON in .mpyproject")
+        return
     deploy = config.get('deploy')
 
     # If deploy was empty/missing and add_default is True, add default first
     if not deploy:
         deploy = {"/": ["./"]} if add_default else {}
 
-    # Normalize dest
-    if not dest.startswith('/'):
-        dest = '/' + dest
+    is_dir_mode = dest == "" or dest.endswith("/")
 
-    if dest not in deploy:
-        deploy[dest] = []
+    if is_dir_mode:
+        # Directory mode: sources is list
+        # For directories, add trailing /
+        src = rel_path + "/" if is_src_dir else rel_path
 
-    if rel_path in deploy[dest]:
-        sublime.status_message(f"'{rel_path}' already in deploy[{dest}]")
-        return
+        if dest not in deploy:
+            deploy[dest] = []
+        elif not isinstance(deploy[dest], list):
+            sublime.status_message(f"Error: '{dest}' is already defined as rename")
+            return
 
-    deploy[dest].append(rel_path)
+        if src in deploy[dest]:
+            sublime.status_message(f"'{src}' already in deploy[{dest}]")
+            return
+
+        deploy[dest].append(src)
+        sublime.status_message(f"Added '{src}' to deploy[{dest}]")
+    else:
+        # Rename mode: sources is single string
+        # No trailing / for source
+        src = rel_path
+
+        if dest in deploy:
+            sublime.status_message(f"Error: '{dest}' is already defined in deploy")
+            return
+
+        deploy[dest] = src
+        sublime.status_message(f"Added rename '{src}' -> '{dest}'")
+
     config['deploy'] = deploy
     save_mpyproject(mpyproject, config)
-    sublime.status_message(f"Added '{rel_path}' to deploy[{dest}]")
 
 
 class MpyAddToDeployCommand(sublime_plugin.WindowCommand):
@@ -737,12 +872,17 @@ class MpyAddToDeployCommand(sublime_plugin.WindowCommand):
     def _show_dest_selection(self):
         """Show quick panel with destination options"""
         config = load_mpyproject(self._mpyproject)
+        if config is None:
+            sublime.status_message("Error: Invalid JSON in .mpyproject")
+            return
         deploy = config.get('deploy') or {}
 
-        # Build options: "/" first, existing paths, "Custom..." last
-        self._dest_options = ["/"]
+        # Build options: "/" first, existing directory paths, "Custom..." last
+        # Only show directory mode destinations (empty or ending with /)
+        self._dest_options = [""]
         for dest in deploy.keys():
-            if dest != "/" and dest not in self._dest_options:
+            is_dir_mode = dest == "" or dest.endswith("/")
+            if is_dir_mode and dest != "" and dest not in self._dest_options:
                 self._dest_options.append(dest)
         self._dest_options.append("Custom...")
 
@@ -756,7 +896,7 @@ class MpyAddToDeployCommand(sublime_plugin.WindowCommand):
             # Show input panel for custom path
             self.window.show_input_panel(
                 "Device path:",
-                "/",
+                "",
                 self._on_custom_dest,
                 None,
                 None)
@@ -766,10 +906,12 @@ class MpyAddToDeployCommand(sublime_plugin.WindowCommand):
     def _on_custom_dest(self, dest):
         if dest is None:
             return
-        self._finish(dest or "/")
+        self._finish(dest)
 
     def _finish(self, dest):
-        add_to_deploy(self._mpyproject, self._rel_path, dest, add_default=self._add_default)
+        add_to_deploy(
+            self._mpyproject, self._rel_path, dest,
+            is_src_dir=self._is_dir, add_default=self._add_default)
 
     def is_visible(self, paths=None):
         if not paths:
@@ -793,6 +935,9 @@ class MpyAddToExcludeCommand(sublime_plugin.WindowCommand):
         rel_path = os.path.relpath(path, root)
 
         config = load_mpyproject(mpyproject)
+        if config is None:
+            sublime.status_message("Error: Invalid JSON in .mpyproject")
+            return
         exclude = config.get('exclude', [])
 
         if rel_path in exclude:
@@ -823,7 +968,7 @@ class MpyCopyToDeviceCommand(MpyToolCommand):
 
         self.window.show_input_panel(
             "Device path:",
-            "/",
+            "",
             self._on_done,
             None,
             None)
@@ -831,9 +976,6 @@ class MpyCopyToDeviceCommand(MpyToolCommand):
     def _on_done(self, dest):
         if dest is None:
             return
-
-        if not dest.startswith('/'):
-            dest = '/' + dest
 
         args = []
         if self._port != 'auto':
@@ -883,12 +1025,17 @@ class MpyAddToOtherProjectCommand(sublime_plugin.WindowCommand):
     def _show_dest_selection(self):
         """Show quick panel with destination options"""
         config = load_mpyproject(self._mpyproject)
+        if config is None:
+            sublime.status_message("Error: Invalid JSON in .mpyproject")
+            return
         deploy = config.get('deploy') or {}
 
-        # Build options: "/" first, existing paths, "Custom..." last
-        self._dest_options = ["/"]
+        # Build options: "" first, existing directory paths, "Custom..." last
+        # Only show directory mode destinations (empty or ending with /)
+        self._dest_options = [""]
         for dest in deploy.keys():
-            if dest != "/" and dest not in self._dest_options:
+            is_dir_mode = dest == "" or dest.endswith("/")
+            if is_dir_mode and dest != "" and dest not in self._dest_options:
                 self._dest_options.append(dest)
         self._dest_options.append("Custom...")
 
@@ -901,7 +1048,7 @@ class MpyAddToOtherProjectCommand(sublime_plugin.WindowCommand):
         if self._dest_options[index] == "Custom...":
             self.window.show_input_panel(
                 "Device path:",
-                "/",
+                "",
                 self._on_custom_dest,
                 None,
                 None)
@@ -911,12 +1058,12 @@ class MpyAddToOtherProjectCommand(sublime_plugin.WindowCommand):
     def _on_custom_dest(self, dest):
         if dest is None:
             return
-        self._finish(dest or "/")
+        self._finish(dest)
 
     def _finish(self, dest):
-        add_to_deploy(self._mpyproject, self._rel_path, dest, add_default=True)
-        project_name = os.path.basename(self._root)
-        sublime.status_message(f"Added '{self._rel_path}' to {project_name}")
+        add_to_deploy(
+            self._mpyproject, self._rel_path, dest,
+            is_src_dir=self._is_dir, add_default=True)
 
     def is_visible(self, paths=None):
         if not paths:

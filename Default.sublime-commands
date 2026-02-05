@@ -7,6 +7,7 @@
     {"caption": "MPY: Restore Backup", "command": "mpy_restore"},
     {"caption": "MPY: List Files", "command": "mpy_tree"},
     {"caption": "MPY: Device Info", "command": "mpy_info"},
+    {"caption": "MPY: Change Directory...", "command": "mpy_chdir"},
     {"caption": "MPY: Erase Device", "command": "mpy_erase_device"},
     {"caption": "MPY: Reset Device", "command": "mpy_reset"},
     {"caption": "MPY: Reset and Monitor", "command": "mpy_reset", "args": {"monitor": true}},
