@@ -1,5 +1,5 @@
 [
-    {"caption": "-", "id": "mpytool_separator"},
+    {"caption": "-", "id": "tools_separator"},
     {
         "caption": "MicroPython",
         "children": [
