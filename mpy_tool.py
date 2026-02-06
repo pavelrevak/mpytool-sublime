@@ -67,14 +67,18 @@ def get_project_name(mpyproject_path):
 class MpyContext:
     """Context for current MicroPython project"""
 
-    _current = None  # manually selected project
+    _current = {}  # manually selected project per window {window_id: path}
 
     @classmethod
     def get(cls, view):
         """Get context for view"""
-        # 1. Manually selected
-        if cls._current and os.path.exists(cls._current):
-            return cls._current
+        window = view.window() if view else sublime.active_window()
+
+        # 1. Manually selected (per window)
+        if window:
+            current = cls._current.get(window.id())
+            if current and os.path.exists(current):
+                return current
 
         # 2. Search from active file
         if view and view.file_name():
@@ -83,7 +87,6 @@ class MpyContext:
                 return found
 
         # 3. Search in open folders
-        window = view.window() if view else sublime.active_window()
         if window:
             for folder in window.folders():
                 found = find_mpyproject(folder)
@@ -93,14 +96,19 @@ class MpyContext:
         return None
 
     @classmethod
-    def set(cls, path):
-        """Manually set project"""
-        cls._current = path
+    def set(cls, window, path):
+        """Manually set project for window"""
+        cls._current[window.id()] = path
 
     @classmethod
-    def clear(cls):
-        """Clear manual selection"""
-        cls._current = None
+    def clear(cls, window):
+        """Clear manual selection for window"""
+        cls._current.pop(window.id(), None)
+
+    @classmethod
+    def is_manual(cls, window):
+        """Check if window has manual project selection"""
+        return window is not None and window.id() in cls._current
 
 
 class MpyProcessManager:
@@ -766,7 +774,7 @@ class MpyNewProjectCommand(sublime_plugin.WindowCommand):
             f.write('\n')
 
         # Set as current project
-        MpyContext.set(path)
+        MpyContext.set(self.window, path)
 
         # Update status and show message
         view = self.window.active_view()
@@ -1097,7 +1105,7 @@ class MpySetActiveCommand(sublime_plugin.WindowCommand):
 
         mpyproject = self._get_mpyproject(paths[0])
         if mpyproject:
-            MpyContext.set(mpyproject)
+            MpyContext.set(self.window, mpyproject)
             view = self.window.active_view()
             if view:
                 view.run_command('mpy_update_status')
@@ -1154,7 +1162,7 @@ class MpySelectProjectCommand(sublime_plugin.WindowCommand):
         # Get current context
         view = self.window.active_view()
         current = MpyContext.get(view) if view else None
-        is_manual = MpyContext._current is not None
+        is_manual = MpyContext.is_manual(self.window)
 
         # Build items list
         items = []
@@ -1180,9 +1188,9 @@ class MpySelectProjectCommand(sublime_plugin.WindowCommand):
                 return
             if index == 0:
                 # Auto mode
-                MpyContext.clear()
+                MpyContext.clear(self.window)
             else:
-                MpyContext.set(self._projects[index])
+                MpyContext.set(self.window, self._projects[index])
 
             view = self.window.active_view()
             if view:
