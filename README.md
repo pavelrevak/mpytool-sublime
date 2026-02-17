@@ -17,7 +17,10 @@ Seamlessly upload and run MicroPython code on your microcontroller directly from
 
 - **Auto-detection** - Finds `.mpyproject` from current file upward
 - **Manual selection** - Switch between multiple projects
-- **Port selection** - Prompts when multiple devices connected
+- **Port selection** - Prompts when multiple devices connected or configured port unavailable
+- **Compile to .mpy** - Optional bytecode compilation for faster imports and less RAM usage
+- **Run current file** - Execute current Python file directly on device
+- **Multiple reset modes** - Soft, machine, RTS, bootloader
 - **Status bar** - Shows active project name
 - **Backup/Restore** - Save and restore device filesystem
 - **Terminus integration** - REPL inside Sublime Text (falls back to external terminal)
@@ -59,9 +62,10 @@ All commands available via Command Palette (`Cmd+Shift+P`) with `MPY:` prefix.
 |---------|-------------|
 | **Deploy to Device** | Upload files + reset + monitor output |
 | **Sync to Device** | Upload files + reset (no monitor) |
+| **Run Current File** | Run current .py file on device |
 | **Monitor** | Watch serial output |
 | **Open REPL** | Interactive Python console |
-| **Reset Device** | Soft reset |
+| **Reset Device** | Soft/machine/hardware reset |
 | **List Files** | Show file tree on device |
 | **Device Info** | Show device information |
 | **Backup Device** | Download all files to `.backup/` |
@@ -70,6 +74,7 @@ All commands available via Command Palette (`Cmd+Shift+P`) with `MPY:` prefix.
 | **New Project...** | Create `.mpyproject` file |
 | **Project Settings** | Open `.mpyproject` for editing |
 | **Select Project...** | Choose active project |
+| **Select Port...** | Choose serial port for project |
 | **Stop** | Stop running process |
 
 ## Keyboard Shortcuts
@@ -101,6 +106,7 @@ Create `.mpyproject` in your project root:
 {
     "name": "my-project",
     "port": "auto",
+    "compile": true,
     "deploy": {
         "": ["./"]
     },
@@ -112,6 +118,7 @@ Create `.mpyproject` in your project root:
 |-------|-------------|
 | `name` | Project name (shown in status bar) |
 | `port` | Serial port or `"auto"` for auto-detection |
+| `compile` | Compile .py to .mpy before upload (requires mpy-cross) |
 | `deploy` | Map of device paths → local sources |
 | `exclude` | Patterns to exclude from upload |
 
