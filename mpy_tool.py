@@ -65,18 +65,30 @@ def get_project_name(mpyproject_path):
 
 
 def detect_ports():
-    """Detect available serial ports using mpytool _ports"""
+    """Detect available serial ports using mpytool ports.
+
+    Returns list of tuples: [(port, description), ...]
+    Example: [("/dev/cu.usbmodem101", "Raspberry Pi Pico W [e6625c05e7824922]")]
+    """
     settings = sublime.load_settings('mpytool.sublime-settings')
     mpytool_path = settings.get('mpytool_path', 'mpytool')
 
     try:
         result = subprocess.run(
-            [mpytool_path, '_ports'],
+            [mpytool_path, 'ports'],
             capture_output=True,
             text=True,
             timeout=5)
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().split('\n')
+            ports = []
+            for line in result.stdout.strip().split('\n'):
+                # Format: "/dev/cu.usbmodem101    Raspberry Pi Pico W [serial]"
+                parts = line.split(None, 1)  # Split on first whitespace
+                if parts:
+                    port = parts[0]
+                    description = parts[1] if len(parts) > 1 else ""
+                    ports.append((port, description))
+            return ports
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return []
@@ -210,12 +222,14 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
 
         ports = detect_ports()
 
+        port_names = [p[0] for p in ports]
+
         if has_port:
             # Check if specified port is available
             try:
                 port_idx = args.index('-p')
                 specified_port = args[port_idx + 1]
-                if specified_port not in ports:
+                if specified_port not in port_names:
                     # Port not available - offer selection
                     if len(ports) == 0:
                         sublime.error_message(
@@ -228,8 +242,10 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
                     self._pending_cwd = cwd
                     self._pending_clear = clear
                     self._unavailable_port = specified_port
+                    self._ports = ports
+                    items = [[p[0], p[1]] for p in ports]
                     self.window.show_quick_panel(
-                        ports, self._on_port_selected,
+                        items, self._on_port_selected,
                         placeholder=f"Port {specified_port} not found. Select available port:")
                     return
             except (ValueError, IndexError):
@@ -245,7 +261,9 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
                 self._pending_cwd = cwd
                 self._pending_clear = clear
                 self._unavailable_port = None
-                self.window.show_quick_panel(ports, self._on_port_selected)
+                self._ports = ports
+                items = [[p[0], p[1]] for p in ports]
+                self.window.show_quick_panel(items, self._on_port_selected)
                 return
             # Single port - mpytool will auto-detect it
 
@@ -265,12 +283,12 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
         if index < 0:
             return
 
-        ports = detect_ports()
-        if index >= len(ports):
+        if index >= len(self._ports):
             return
 
         # Add -p port to args and run
-        args = ['-p', ports[index]] + self._pending_args
+        selected_port = self._ports[index][0]
+        args = ['-p', selected_port] + self._pending_args
         self.run_mpytool(args, self._pending_cwd, self._pending_clear)
 
     def _run_process(self, cmd, cwd):
@@ -1296,13 +1314,13 @@ class MpySelectPortCommand(sublime_plugin.WindowCommand):
         items.append([auto_label, "Auto-detect port"])
 
         # Detected ports
-        for p in ports:
-            if p == current_port:
-                label = f"● {p}"
+        for port, description in ports:
+            if port == current_port:
+                label = f"● {port}"
             else:
-                label = f"  {p}"
-            items.append([label, ""])
-            self._ports.append(p)
+                label = f"  {port}"
+            items.append([label, description])
+            self._ports.append(port)
 
         def on_select(index):
             if index < 0:
