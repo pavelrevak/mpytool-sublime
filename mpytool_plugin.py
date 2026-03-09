@@ -602,8 +602,6 @@ class MpyBackupCommand(MpyToolCommand):
     """Backup device to local folder"""
 
     def run(self):
-        self._port = self.get_port()
-
         # Get current directory
         view = self.window.active_view()
         if view and view.file_name():
@@ -633,13 +631,7 @@ class MpyBackupCommand(MpyToolCommand):
         if not os.path.exists(path):
             os.makedirs(path)
 
-        args = []
-        if self._port != 'auto':
-            args.extend(['-p', self._port])
-
-        args.extend(['cp', ':', path])
-
-        self.run_mpytool(args)
+        self.run_mpytool(['cp', ':', path])
 
 
 class MpyRestoreCommand(MpyToolCommand):
@@ -662,8 +654,6 @@ class MpyRestoreCommand(MpyToolCommand):
             sublime.error_message("No .backup directory found")
             return
 
-        self._port = self.get_port()
-
         self.window.show_input_panel(
             "Restore from:",
             backup_path,
@@ -682,44 +672,22 @@ class MpyRestoreCommand(MpyToolCommand):
             sublime.error_message(f"Directory not found: {path}")
             return
 
-        args = []
-        if self._port != 'auto':
-            args.extend(['-p', self._port])
-
         # Upload contents of backup folder to device root
-        args.extend(['cp', path + '/', ':'])
-
-        self.run_mpytool(args)
+        self.run_mpytool(['cp', path + '/', ':'])
 
 
 class MpyTreeCommand(MpyToolCommand):
     """Show file tree on device"""
 
     def run(self):
-        port = self.get_port()
-
-        args = []
-        if port != 'auto':
-            args.extend(['-p', port])
-
-        args.append('tree')
-
-        self.run_mpytool(args)
+        self.run_mpytool(['tree'])
 
 
 class MpyInfoCommand(MpyToolCommand):
     """Show device info"""
 
     def run(self):
-        port = self.get_port()
-
-        args = []
-        if port != 'auto':
-            args.extend(['-p', port])
-
-        args.append('info')
-
-        self.run_mpytool(args)
+        self.run_mpytool(['info'])
 
 
 class MpyEraseDeviceCommand(MpyToolCommand):
@@ -730,16 +698,7 @@ class MpyEraseDeviceCommand(MpyToolCommand):
                 "Remove ALL files from device?",
                 "Remove All"):
             return
-
-        port = self.get_port()
-
-        args = []
-        if port != 'auto':
-            args.extend(['-p', port])
-
-        args.extend(['rm', ':'])
-
-        self.run_mpytool(args)
+        self.run_mpytool(['rm', ':'])
 
 
 class MpyRunCommand(MpyToolCommand):
@@ -756,14 +715,7 @@ class MpyRunCommand(MpyToolCommand):
             sublime.error_message("Not a Python file")
             return
 
-        port = self.get_port()
-
-        args = []
-        if port != 'auto':
-            args.extend(['-p', port])
-
-        args.extend(['run', file_path])
-
+        args = ['run', file_path]
         if monitor:
             args.extend(['--', 'monitor'])
 
@@ -780,17 +732,59 @@ class MpyReplCommand(MpyToolCommand):
     _terminus_tag = "mpytool_repl"
 
     def run(self):
-        port = self.get_port()
-
         settings = sublime.load_settings('mpytool.sublime-settings')
-        mpytool_path = settings.get('mpytool_path', 'mpytool')
+        self._mpytool_path = settings.get('mpytool_path', 'mpytool')
 
-        args = []
+        # Get connection from config
+        port = self.get_port()
+        address = self.get_address()
+
+        # Detect serial ports
+        detected = detect_ports()
+        if detected is None:
+            sublime.error_message(
+                f"mpytool not found: {self._mpytool_path}\n\n"
+                "Install with: pip install mpytool")
+            return
+
+        # Build connection options
+        self._connections = []
+
+        if address:
+            self._connections.append(['-a', address, f"{address} (network)"])
+
         if port != 'auto':
-            args.extend(['-p', port])
-        args.append('repl')
+            detected_names = [p[0] for p in detected]
+            if port in detected_names:
+                self._connections.append(['-p', port, f"{port} (configured)"])
+                for p in detected:
+                    if p[0] != port:
+                        self._connections.append(['-p', p[0], p[1]])
+            else:
+                self._connections.append(['-p', port, f"{port} (configured)"])
+                for p in detected:
+                    self._connections.append(['-p', p[0], p[1]])
+        else:
+            for p in detected:
+                self._connections.append(['-p', p[0], p[1]])
 
-        cmd = [mpytool_path] + args
+        if len(self._connections) == 0:
+            sublime.error_message("No connection available")
+            return
+
+        if len(self._connections) == 1:
+            self._open_repl(self._connections[0])
+        else:
+            items = [[c[1], c[2]] for c in self._connections]
+            self.window.show_quick_panel(items, self._on_connection_select)
+
+    def _on_connection_select(self, index):
+        if index < 0:
+            return
+        self._open_repl(self._connections[index])
+
+    def _open_repl(self, connection):
+        cmd = [self._mpytool_path, connection[0], connection[1], 'repl']
 
         # Try Terminus first
         if self._try_terminus(cmd):
@@ -854,13 +848,7 @@ class MpyResetCommand(MpyToolCommand):
         if index < 0:
             return
 
-        port = self.get_port()
-
-        args = []
-        if port != 'auto':
-            args.extend(['-p', port])
-
-        args.append('reset')
+        args = ['reset']
 
         flag = self._reset_modes[index][1]
         if flag:
@@ -876,18 +864,64 @@ class MpyChdirCommand(MpyToolCommand):
     """Change device working directory"""
 
     def run(self):
-        self._port = self.get_port()
+        settings = sublime.load_settings('mpytool.sublime-settings')
+        self._mpytool_path = settings.get('mpytool_path', 'mpytool')
+
+        # Get connection from config
+        port = self.get_port()
+        address = self.get_address()
+
+        # Detect serial ports
+        detected = detect_ports()
+        if detected is None:
+            sublime.error_message(
+                f"mpytool not found: {self._mpytool_path}\n\n"
+                "Install with: pip install mpytool")
+            return
+
+        # Build connection options: [flag, value, label]
+        self._connections = []
+
+        if address:
+            self._connections.append(['-a', address, f"{address} (network)"])
+
+        if port != 'auto':
+            detected_names = [p[0] for p in detected]
+            if port in detected_names:
+                self._connections.append(['-p', port, f"{port} (configured)"])
+                for p in detected:
+                    if p[0] != port:
+                        self._connections.append(['-p', p[0], p[1]])
+            else:
+                self._connections.append(['-p', port, f"{port} (configured)"])
+                for p in detected:
+                    self._connections.append(['-p', p[0], p[1]])
+        else:
+            for p in detected:
+                self._connections.append(['-p', p[0], p[1]])
+
+        if len(self._connections) == 0:
+            sublime.error_message("No connection available")
+            return
+
+        if len(self._connections) == 1:
+            self._use_connection(self._connections[0])
+        else:
+            items = [[c[1], c[2]] for c in self._connections]
+            self.window.show_quick_panel(items, self._on_connection_select)
+
+    def _on_connection_select(self, index):
+        if index < 0:
+            return
+        self._use_connection(self._connections[index])
+
+    def _use_connection(self, connection):
+        self._connection = connection
         thread = threading.Thread(target=self._get_cwd)
         thread.start()
 
     def _get_cwd(self):
-        settings = sublime.load_settings('mpytool.sublime-settings')
-        mpytool_path = settings.get('mpytool_path', 'mpytool')
-
-        cmd = [mpytool_path]
-        if self._port != 'auto':
-            cmd.extend(['-p', self._port])
-        cmd.append('pwd')
+        cmd = [self._mpytool_path, self._connection[0], self._connection[1], 'pwd']
 
         try:
             result = subprocess.run(
@@ -910,27 +944,28 @@ class MpyChdirCommand(MpyToolCommand):
         if path is None:
             return
 
-        args = []
-        if self._port != 'auto':
-            args.extend(['-p', self._port])
-        args.extend(['cd', f':{path}'])
+        args = [self._connection[0], self._connection[1], 'cd', f':{path}']
+        self._execute_mpytool(self._mpytool_path, args, None, True)
 
-        self.run_mpytool(args)
+    def _execute_mpytool(self, mpytool_path, args, cwd, clear):
+        """Execute mpytool command"""
+        cmd = [mpytool_path] + args
+
+        self.get_panel(clear=clear)
+        self.show_panel()
+        self.append_output(f"$ {shlex.join(cmd)}\n")
+
+        thread = threading.Thread(
+            target=self._run_process,
+            args=(cmd, cwd))
+        thread.start()
 
 
 class MpyMonitorCommand(MpyToolCommand):
     """Monitor device output"""
 
     def run(self):
-        port = self.get_port()
-
-        args = []
-        if port != 'auto':
-            args.extend(['-p', port])
-
-        args.append('monitor')
-
-        self.run_mpytool(args)
+        self.run_mpytool(['monitor'])
 
 
 class MpyNewProjectCommand(sublime_plugin.WindowCommand):
@@ -1182,7 +1217,6 @@ class MpyCopyToDeviceCommand(MpyToolCommand):
 
         self._path = paths[0]
         self._is_folder = os.path.isdir(self._path)
-        self._port = self.get_port()
 
         self.window.show_input_panel(
             "Device path:",
@@ -1195,13 +1229,8 @@ class MpyCopyToDeviceCommand(MpyToolCommand):
         if dest is None:
             return
 
-        args = []
-        if self._port != 'auto':
-            args.extend(['-p', self._port])
-
         src = self._path + '/' if self._is_folder else self._path
-        args.extend(['cp', src, f':{dest}'])
-        self.run_mpytool(args)
+        self.run_mpytool(['cp', src, f':{dest}'])
 
 
 class MpyAddToOtherProjectCommand(MpyAddToDeployCommand):
@@ -1260,7 +1289,7 @@ class MpySetActiveCommand(sublime_plugin.WindowCommand):
         if not paths:
             return
 
-        mpyproject = self._get_mpyproject(paths[0])
+        mpyproject = find_mpyproject(paths[0])
         if mpyproject:
             MpyContext.set(self.window, mpyproject)
             view = self.window.active_view()
@@ -1268,22 +1297,17 @@ class MpySetActiveCommand(sublime_plugin.WindowCommand):
                 view.run_command('mpy_update_status')
             sublime.status_message(f"Active project: {get_project_name(mpyproject)}")
 
-    def _get_mpyproject(self, path):
-        """Get .mpyproject path from file or folder"""
-        # Clicked on .mpyproject file
-        if os.path.basename(path) == '.mpyproject':
-            return path
-        # Clicked on folder containing .mpyproject
-        if os.path.isdir(path):
-            candidate = os.path.join(path, '.mpyproject')
-            if os.path.exists(candidate):
-                return candidate
-        return None
-
     def is_visible(self, paths=None):
         if not paths:
             return False
-        return self._get_mpyproject(paths[0]) is not None
+        return find_mpyproject(paths[0]) is not None
+
+    def description(self, paths=None):
+        if paths:
+            mpyproject = find_mpyproject(paths[0])
+            if mpyproject:
+                return f"Set Active: {get_project_name(mpyproject)}"
+        return "Set as Active Project"
 
 
 class MpyProjectSettingsCommand(sublime_plugin.WindowCommand):
