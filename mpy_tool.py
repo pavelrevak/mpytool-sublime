@@ -1351,10 +1351,6 @@ class MpyUpdateStatusCommand(sublime_plugin.TextCommand):
             self.view.erase_status('mpytool')
 
 
-def plugin_loaded():
-    """Called by Sublime when plugin is loaded"""
-    print("MpyTool: plugin loaded")
-
 
 class MpyEventListener(sublime_plugin.EventListener):
     """Event listener for automatic actions"""
