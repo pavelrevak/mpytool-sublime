@@ -196,6 +196,13 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
             return config.get('port', 'auto')
         return 'auto'
 
+    def get_address(self):
+        """Get network address from config or None"""
+        mpyproject, config = self.get_context(required=False)
+        if config:
+            return config.get('address')
+        return None
+
     def get_panel(self, clear=False):
         """Get or create output panel"""
         if clear or MpyToolCommand._panel is None:
@@ -218,61 +225,70 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
         settings = sublime.load_settings('mpytool.sublime-settings')
         mpytool_path = settings.get('mpytool_path', 'mpytool')
 
-        # Check if port is already specified in args
+        # Check if connection already specified in args
         has_port = '-p' in args
+        has_address = '-a' in args
 
-        ports = detect_ports()
-        if ports is None:
+        if has_port or has_address:
+            # Connection already specified - run directly
+            self._execute_mpytool(mpytool_path, args, cwd, clear)
+            return
+
+        # Get connection from config
+        port = self.get_port()
+        address = self.get_address()
+
+        # Detect serial ports
+        detected = detect_ports()
+        if detected is None:
             sublime.error_message(
                 f"mpytool not found: {mpytool_path}\n\n"
                 "Install with: pip install mpytool")
             return
 
-        port_names = [p[0] for p in ports]
+        # Build connection options
+        # Format: (args_prefix, label) - args_prefix is ['-a', addr] or ['-p', port]
+        options = []
 
-        if has_port:
-            # Check if specified port is available
-            try:
-                port_idx = args.index('-p')
-                specified_port = args[port_idx + 1]
-                if specified_port not in port_names:
-                    # Port not available - offer selection
-                    if len(ports) == 0:
-                        sublime.error_message(
-                            f"Port {specified_port} not found.\n"
-                            "No serial ports available.")
-                        return
-                    # Remove -p and port from args for re-selection
-                    args_without_port = args[:port_idx] + args[port_idx + 2:]
-                    self._pending_args = args_without_port
-                    self._pending_cwd = cwd
-                    self._pending_clear = clear
-                    self._unavailable_port = specified_port
-                    self._ports = ports
-                    items = [[p[0], p[1]] for p in ports]
-                    self.window.show_quick_panel(
-                        items, self._on_port_selected,
-                        placeholder=f"Port {specified_port} not found. Select available port:")
-                    return
-            except (ValueError, IndexError):
-                pass
+        if address:
+            options.append((['-a', address], f"{address} (network)"))
+
+        if port != 'auto':
+            detected_names = [p[0] for p in detected]
+            if port in detected_names:
+                # Configured port is detected - add it first
+                options.append((['-p', port], f"{port} (configured)"))
+                for p in detected:
+                    if p[0] != port:
+                        options.append((['-p', p[0]], p[1]))
+            else:
+                # Configured port not detected - add it anyway
+                options.append((['-p', port], f"{port} (configured)"))
+                options.extend([(['-p', p[0]], p[1]) for p in detected])
         else:
-            # No port specified - detect available ports
-            if len(ports) == 0:
-                sublime.error_message("No serial ports found")
-                return
-            elif len(ports) > 1:
-                # Multiple ports - show selection
-                self._pending_args = args
-                self._pending_cwd = cwd
-                self._pending_clear = clear
-                self._unavailable_port = None
-                self._ports = ports
-                items = [[p[0], p[1]] for p in ports]
-                self.window.show_quick_panel(items, self._on_port_selected)
-                return
-            # Single port - mpytool will auto-detect it
+            # Auto - just detected ports
+            options.extend([(['-p', p[0]], p[1]) for p in detected])
 
+        if len(options) == 0:
+            sublime.error_message("No connection available")
+            return
+
+        if len(options) == 1:
+            # Single option - use directly
+            self._execute_mpytool(mpytool_path, options[0][0] + args, cwd, clear)
+            return
+
+        # Multiple options - show selection
+        self._pending_mpytool = mpytool_path
+        self._pending_args = args
+        self._pending_cwd = cwd
+        self._pending_clear = clear
+        self._connection_options = options
+        items = [[opt[0][1], opt[1]] for opt in options]
+        self.window.show_quick_panel(items, self._on_connection_selected)
+
+    def _execute_mpytool(self, mpytool_path, args, cwd, clear):
+        """Execute mpytool command"""
         cmd = [mpytool_path] + args
 
         self.get_panel(clear=clear)
@@ -284,18 +300,15 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
             args=(cmd, cwd))
         thread.start()
 
-    def _on_port_selected(self, index):
-        """Handle port selection from quick panel"""
+    def _on_connection_selected(self, index):
+        """Handle connection selection from quick panel"""
         if index < 0:
             return
 
-        if index >= len(self._ports):
-            return
-
-        # Add -p port to args and run
-        selected_port = self._ports[index][0]
-        args = ['-p', selected_port] + self._pending_args
-        self.run_mpytool(args, self._pending_cwd, self._pending_clear)
+        connection_args = self._connection_options[index][0]
+        args = connection_args + self._pending_args
+        self._execute_mpytool(
+            self._pending_mpytool, args, self._pending_cwd, self._pending_clear)
 
     def _run_process(self, cmd, cwd):
         """Run process and stream output"""
@@ -357,6 +370,7 @@ class MpySyncCommand(MpyToolCommand):
 
         root = get_project_root(mpyproject)
         port = config.get('port', 'auto')
+        address = config.get('address')
         compile_mpy = config.get('compile', False)
 
         # Show which project is being used
@@ -370,7 +384,10 @@ class MpySyncCommand(MpyToolCommand):
 
         args = []
 
-        if port != 'auto':
+        # Connection: address takes priority if both are set
+        if address:
+            args.extend(['-a', address])
+        elif port != 'auto':
             args.extend(['-p', port])
 
         # Add exclude patterns
@@ -440,6 +457,120 @@ class MpyDeployCommand(MpySyncCommand):
 
     def run(self):
         self._run_sync(monitor=True)
+
+
+class MpyDeploySelectCommand(MpySyncCommand):
+    """Deploy to Device with project and port selection"""
+
+    def run(self):
+        # Find all projects
+        self._projects = []
+        for folder in self.window.folders():
+            for root, dirs, files in os.walk(folder):
+                if '.mpyproject' in files:
+                    self._projects.append(os.path.join(root, '.mpyproject'))
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+        if not self._projects:
+            sublime.error_message("No .mpyproject found")
+            return
+
+        # Show project selection
+        items = [
+            sublime.QuickPanelItem(get_project_name(p), annotation=os.path.dirname(p))
+            for p in self._projects
+        ]
+        self.window.show_quick_panel(items, self._on_project_select)
+
+    def _on_project_select(self, index):
+        if index < 0:
+            return
+
+        self._selected_project = self._projects[index]
+
+        # Get configured connection
+        config = load_mpyproject(self._selected_project)
+        configured_port = config.get('port', 'auto') if config else 'auto'
+        configured_address = config.get('address') if config else None
+
+        # Detect serial ports
+        detected = detect_ports()
+        if detected is None:
+            settings = sublime.load_settings('mpytool.sublime-settings')
+            mpytool_path = settings.get('mpytool_path', 'mpytool')
+            sublime.error_message(
+                f"mpytool not found: {mpytool_path}\n\n"
+                "Install with: pip install mpytool")
+            return
+
+        # Build connection options: (type, value, label)
+        # type is 'address' or 'port'
+        self._connections = []
+
+        if configured_address:
+            self._connections.append(('address', configured_address, f"{configured_address} (network)"))
+
+        detected_names = [p[0] for p in detected]
+        if configured_port != 'auto':
+            if configured_port in detected_names:
+                self._connections.append(('port', configured_port, f"{configured_port} (configured)"))
+                for p in detected:
+                    if p[0] != configured_port:
+                        self._connections.append(('port', p[0], p[1]))
+            else:
+                self._connections.append(('port', configured_port, f"{configured_port} (configured)"))
+                for p in detected:
+                    self._connections.append(('port', p[0], p[1]))
+        else:
+            for p in detected:
+                self._connections.append(('port', p[0], p[1]))
+
+        if len(self._connections) == 0:
+            sublime.error_message("No connection available")
+            return
+
+        if len(self._connections) == 1:
+            self._deploy_with_connection(self._connections[0])
+        else:
+            items = [[c[1], c[2]] for c in self._connections]
+            self.window.show_quick_panel(items, self._on_connection_select)
+
+    def _on_connection_select(self, index):
+        if index < 0:
+            return
+        self._deploy_with_connection(self._connections[index])
+
+    def _deploy_with_connection(self, connection):
+        conn_type, conn_value, _ = connection
+
+        # Temporarily set the project context
+        MpyContext.set(self.window, self._selected_project)
+
+        # Load config and set connection
+        config = load_mpyproject(self._selected_project)
+        if config is None:
+            sublime.error_message(f"Invalid JSON in {self._selected_project}")
+            return
+
+        # Override connection in config for this deploy
+        if conn_type == 'address':
+            config['address'] = conn_value
+            config.pop('port', None)
+        else:
+            config['port'] = conn_value
+            config.pop('address', None)
+        self._deploy_config = config
+
+        self._run_sync(monitor=True)
+
+    def get_context(self, required=True):
+        """Override to use selected project"""
+        if hasattr(self, '_selected_project'):
+            config = getattr(self, '_deploy_config', None)
+            if config is None:
+                config = load_mpyproject(self._selected_project)
+            return self._selected_project, config
+        return super().get_context(required)
 
 
 class MpyStopCommand(sublime_plugin.WindowCommand):

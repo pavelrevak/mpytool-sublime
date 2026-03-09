@@ -9,6 +9,7 @@
                     {"caption": "Project Settings", "command": "mpy_project_settings"},
                     {"caption": "-"},
                     {"caption": "Deploy to Device", "command": "mpy_deploy"},
+                    {"caption": "Deploy to Device...", "command": "mpy_deploy_select"},
                     {"caption": "Sync to Device", "command": "mpy_sync"},
                     {"caption": "Run Current File", "command": "mpy_run"},
                     {"caption": "-"},
