@@ -10,11 +10,13 @@
                     {"caption": "-"},
                     {"caption": "Deploy to Device", "command": "mpy_deploy"},
                     {"caption": "Sync to Device", "command": "mpy_sync"},
+                    {"caption": "Run Current File", "command": "mpy_run"},
                     {"caption": "-"},
                     {"caption": "Backup Device", "command": "mpy_backup"},
                     {"caption": "Restore Backup", "command": "mpy_restore"},
                     {"caption": "List Files", "command": "mpy_tree"},
                     {"caption": "Device Info", "command": "mpy_info"},
+                    {"caption": "Change Directory...", "command": "mpy_chdir"},
                     {"caption": "Erase Device", "command": "mpy_erase_device"},
                     {"caption": "-"},
                     {"caption": "Reset Device", "command": "mpy_reset"},
@@ -23,7 +25,8 @@
                     {"caption": "Open REPL", "command": "mpy_repl"},
                     {"caption": "-"},
                     {"caption": "Stop", "command": "mpy_stop"},
-                    {"caption": "Select Project...", "command": "mpy_select_project"}
+                    {"caption": "Select Project...", "command": "mpy_select_project"},
+                    {"caption": "Select Port...", "command": "mpy_select_port"}
                 ]
             }
         ]

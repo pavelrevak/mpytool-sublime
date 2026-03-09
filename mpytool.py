@@ -67,8 +67,7 @@ def get_project_name(mpyproject_path):
 def detect_ports():
     """Detect available serial ports using mpytool ports.
 
-    Returns list of tuples: [(port, description), ...]
-    Example: [("/dev/cu.usbmodem101", "Raspberry Pi Pico W [e6625c05e7824922]")]
+    Returns list of tuples [(port, description), ...], or None if mpytool not found.
     """
     settings = sublime.load_settings('mpytool.sublime-settings')
     mpytool_path = settings.get('mpytool_path', 'mpytool')
@@ -89,7 +88,9 @@ def detect_ports():
                     description = parts[1] if len(parts) > 1 else ""
                     ports.append((port, description))
             return ports
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
+        return None  # mpytool not installed
+    except subprocess.TimeoutExpired:
         pass
     return []
 
@@ -221,6 +222,11 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
         has_port = '-p' in args
 
         ports = detect_ports()
+        if ports is None:
+            sublime.error_message(
+                f"mpytool not found: {mpytool_path}\n\n"
+                "Install with: pip install mpytool")
+            return
 
         port_names = [p[0] for p in ports]
 
@@ -358,8 +364,8 @@ class MpySyncCommand(MpyToolCommand):
         self.show_panel()
         self.append_output(f"Project: {mpyproject}\n")
 
-        # Get deploy config: {"/": ["./"], "/lib/": ["../x.py"]}
-        # Default: deploy entire project to /
+        # Get deploy config: {"": ["./"], "/lib/": ["../x.py"]}
+        # Default: deploy entire project to root
         deploy = config.get('deploy') or {"": ["./"]}
 
         args = []
@@ -676,27 +682,17 @@ class MpyReplCommand(MpyToolCommand):
                 self.window.focus_view(view)
                 return True
 
-        # Check if Terminus is available
-        if "Terminus" not in sys.modules:
-            try:
-                sublime.find_resources("Terminus.sublime-settings")
-            except Exception:
-                return False
-            # Check if command exists
-            if not self.window.find_output_panel("Terminus"):
-                pass  # OK, just means no panel yet
-
-        # Try to open new Terminus
-        try:
-            self.window.run_command("terminus_open", {
-                "cmd": cmd,
-                "title": "MicroPython REPL",
-                "auto_close": True,
-                "tag": self._terminus_tag,
-            })
-            return True
-        except Exception:
+        # Check if Terminus is installed
+        if not sublime.find_resources("Terminus.sublime-settings"):
             return False
+
+        self.window.run_command("terminus_open", {
+            "cmd": cmd,
+            "title": "MicroPython REPL",
+            "auto_close": True,
+            "tag": self._terminus_tag,
+        })
+        return True
 
 
 class MpyResetCommand(MpyToolCommand):
@@ -780,13 +776,13 @@ class MpyChdirCommand(MpyToolCommand):
             None)
 
     def _on_done(self, path):
-        if not path:
+        if path is None:
             return
 
         args = []
         if self._port != 'auto':
             args.extend(['-p', self._port])
-        args.extend(['cd', ':' + path])
+        args.extend(['cd', f':{path}'])
 
         self.run_mpytool(args)
 
@@ -810,21 +806,7 @@ class MpyNewProjectCommand(sublime_plugin.WindowCommand):
     """Create new .mpyproject file"""
 
     def run(self, paths=None):
-        # Determine initial directory
-        if paths:
-            # From sidebar context menu
-            path = paths[0]
-            directory = path if os.path.isdir(path) else os.path.dirname(path)
-        else:
-            # From command palette
-            view = self.window.active_view()
-            if view and view.file_name():
-                directory = os.path.dirname(view.file_name())
-            elif self.window.folders():
-                directory = self.window.folders()[0]
-            else:
-                directory = os.path.expanduser("~")
-
+        directory = self._get_current_directory(paths) or os.path.expanduser("~")
         initial_path = os.path.join(directory, ".mpyproject")
 
         self.window.show_input_panel(
@@ -983,7 +965,7 @@ class MpyAddToDeployCommand(sublime_plugin.WindowCommand):
             return
         deploy = config.get('deploy') or {}
 
-        # Build options: "/" first, existing directory paths, "Custom..." last
+        # Build options: "" (root) first, existing directory paths, "Custom..." last
         # Only show directory mode destinations (empty or ending with /)
         self._dest_options = [""]
         for dest in deploy.keys():
@@ -999,7 +981,6 @@ class MpyAddToDeployCommand(sublime_plugin.WindowCommand):
             return
 
         if self._dest_options[index] == "Custom...":
-            # Show input panel for custom path
             self.window.show_input_panel(
                 "Device path:",
                 "",
@@ -1088,12 +1069,14 @@ class MpyCopyToDeviceCommand(MpyToolCommand):
             args.extend(['-p', self._port])
 
         src = self._path + '/' if self._is_folder else self._path
-        args.extend(['cp', src, ':' + dest])
+        args.extend(['cp', src, f':{dest}'])
         self.run_mpytool(args)
 
 
-class MpyAddToOtherProjectCommand(sublime_plugin.WindowCommand):
+class MpyAddToOtherProjectCommand(MpyAddToDeployCommand):
     """Add file/folder to another project's deploy config"""
+
+    _add_default = True
 
     def run(self, paths=None):
         if not paths:
@@ -1123,53 +1106,9 @@ class MpyAddToOtherProjectCommand(sublime_plugin.WindowCommand):
             return
 
         self._mpyproject = self._projects[index]
-        self._root = get_project_root(self._mpyproject)
-        self._rel_path = os.path.relpath(self._path, self._root)
+        self._rel_path = os.path.relpath(self._path, get_project_root(self._mpyproject))
 
         self._show_dest_selection()
-
-    def _show_dest_selection(self):
-        """Show quick panel with destination options"""
-        config = load_mpyproject(self._mpyproject)
-        if config is None:
-            sublime.status_message("Error: Invalid JSON in .mpyproject")
-            return
-        deploy = config.get('deploy') or {}
-
-        # Build options: "" first, existing directory paths, "Custom..." last
-        # Only show directory mode destinations (empty or ending with /)
-        self._dest_options = [""]
-        for dest in deploy.keys():
-            is_dir_mode = dest == "" or dest.endswith("/")
-            if is_dir_mode and dest != "" and dest not in self._dest_options:
-                self._dest_options.append(dest)
-        self._dest_options.append("Custom...")
-
-        self.window.show_quick_panel(self._dest_options, self._on_dest_select)
-
-    def _on_dest_select(self, index):
-        if index < 0:
-            return
-
-        if self._dest_options[index] == "Custom...":
-            self.window.show_input_panel(
-                "Device path:",
-                "",
-                self._on_custom_dest,
-                None,
-                None)
-        else:
-            self._finish(self._dest_options[index])
-
-    def _on_custom_dest(self, dest):
-        if dest is None:
-            return
-        self._finish(dest)
-
-    def _finish(self, dest):
-        add_to_deploy(
-            self._mpyproject, self._rel_path, dest,
-            is_src_dir=self._is_dir, add_default=True)
 
     def is_visible(self, paths=None):
         if not paths:
