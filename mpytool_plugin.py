@@ -1464,14 +1464,17 @@ class MpyOpenSettingsCommand(sublime_plugin.WindowCommand):
 
 
 class MpyOpenKeybindingsCommand(sublime_plugin.WindowCommand):
-    """Open plugin key bindings"""
+    """Open plugin key bindings in split view with user keybindings"""
 
     def run(self):
         plugin = get_plugin_path()
         platform = sublime.platform()
         platform_name = {'osx': 'OSX', 'windows': 'Windows', 'linux': 'Linux'}[platform]
-        self.window.open_file(
-            f'{sublime.packages_path()}/{plugin}/Default ({platform_name}).sublime-keymap')
+        self.window.run_command('edit_settings', {
+            'base_file': f'${{packages}}/{plugin}/Default ({platform_name}).sublime-keymap',
+            'user_file': f'${{packages}}/User/Default ({platform_name}).sublime-keymap',
+            'default': '[\n\t$0\n]\n'
+        })
 
 
 class MpyUpdateStatusCommand(sublime_plugin.TextCommand):
