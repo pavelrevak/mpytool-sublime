@@ -47,11 +47,11 @@ Clone or download to Sublime Text Packages directory:
 ```bash
 # macOS
 cd ~/Library/Application\ Support/Sublime\ Text/Packages
-git clone https://github.com/pavelrevak/mpytool-sublime.git mpytool
+git clone https://github.com/pavelrevak/mpytool-sublime.git
 
 # Linux
 cd ~/.config/sublime-text/Packages
-git clone https://github.com/pavelrevak/mpytool-sublime.git mpytool
+git clone https://github.com/pavelrevak/mpytool-sublime.git
 ```
 
 ## Commands
@@ -168,11 +168,32 @@ Deploy supports two modes based on destination path:
 
 ### Plugin Settings
 
-`Preferences → Package Settings → mpytool → Settings`:
+`Preferences → Package Settings → MpyTool → Settings`:
 
 ```json
 {
-    "mpytool_path": "mpytool"
+    "mpytool_path": "mpytool",
+    "deploy_on_save": false
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `mpytool_path` | Path to mpytool executable |
+| `deploy_on_save` | Auto-deploy file on save (default: `false`) |
+
+### Deploy on Save
+
+When `deploy_on_save` is enabled, saving a file automatically deploys it to device if:
+- File is within project sources (defined in `deploy`)
+- File doesn't match any `exclude` pattern
+
+Enable globally in settings or per-project in `.mpyproject`:
+
+```json
+{
+    "deploy_on_save": true,
+    "deploy": {"": ["./"]}
 }
 ```
 

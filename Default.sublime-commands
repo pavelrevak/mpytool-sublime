@@ -18,20 +18,6 @@
     {"caption": "MPY: Stop", "command": "mpy_stop"},
     {"caption": "MPY: Select Project...", "command": "mpy_select_project"},
     {"caption": "MPY: Select Port...", "command": "mpy_select_port"},
-    {
-        "caption": "Preferences: MpyTool Settings",
-        "command": "edit_settings",
-        "args": {
-            "base_file": "${packages}/mpytool/mpytool.sublime-settings",
-            "user_file": "${packages}/User/mpytool.sublime-settings",
-            "default": "{\n\t$0\n}\n"
-        }
-    },
-    {
-        "caption": "Preferences: MpyTool Key Bindings",
-        "command": "open_file",
-        "args": {
-            "file": "${packages}/mpytool/Default (${platform}).sublime-keymap"
-        }
-    }
+    {"caption": "Preferences: MpyTool Settings", "command": "mpy_open_settings"},
+    {"caption": "Preferences: MpyTool Key Bindings", "command": "mpy_open_keybindings"}
 ]

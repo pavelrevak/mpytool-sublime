@@ -9,6 +9,7 @@ import sublime_plugin
 import subprocess
 import sys
 import threading
+import fnmatch
 import json
 import os
 import re
@@ -961,6 +962,15 @@ class MpyChdirCommand(MpyToolCommand):
         thread.start()
 
 
+class MpyDeployFileCommand(MpyToolCommand):
+    """Deploy single file (internal command for deploy on save)"""
+
+    def run(self, file_path, mpyproject, args, cwd):
+        # Set context for connection selection
+        MpyContext.set(self.window, mpyproject)
+        self.run_mpytool(args, cwd=cwd)
+
+
 class MpyMonitorCommand(MpyToolCommand):
     """Monitor device output"""
 
@@ -1433,6 +1443,37 @@ class MpySelectPortCommand(sublime_plugin.WindowCommand):
         return MpyContext.get(view) is not None
 
 
+def get_plugin_path():
+    """Get path to plugin directory relative to Packages"""
+    # __file__ is like /path/to/Packages/plugin-name/mpytool_plugin.py
+    plugin_dir = os.path.dirname(__file__)
+    packages_dir = os.path.dirname(plugin_dir)
+    return os.path.relpath(plugin_dir, packages_dir)
+
+
+class MpyOpenSettingsCommand(sublime_plugin.WindowCommand):
+    """Open plugin settings"""
+
+    def run(self):
+        plugin = get_plugin_path()
+        self.window.run_command('edit_settings', {
+            'base_file': f'${{packages}}/{plugin}/mpytool.sublime-settings',
+            'user_file': '${packages}/User/mpytool.sublime-settings',
+            'default': '{\n\t$0\n}\n'
+        })
+
+
+class MpyOpenKeybindingsCommand(sublime_plugin.WindowCommand):
+    """Open plugin key bindings"""
+
+    def run(self):
+        plugin = get_plugin_path()
+        platform = sublime.platform()
+        platform_name = {'osx': 'OSX', 'windows': 'Windows', 'linux': 'Linux'}[platform]
+        self.window.open_file(
+            f'{sublime.packages_path()}/{plugin}/Default ({platform_name}).sublime-keymap')
+
+
 class MpyUpdateStatusCommand(sublime_plugin.TextCommand):
     """Update status bar"""
 
@@ -1446,12 +1487,170 @@ class MpyUpdateStatusCommand(sublime_plugin.TextCommand):
 
 
 
+def is_file_in_deploy(file_path, mpyproject_path, config):
+    """Check if file is in deploy config sources.
+
+    Returns (dest, source, rel_in_source) tuple if found, None if not in deploy.
+    - dest: device destination from deploy config
+    - source: matching source path from config
+    - rel_in_source: file path relative to source
+    """
+    deploy = config.get('deploy')
+    if not deploy:
+        return None
+
+    root = get_project_root(mpyproject_path)
+    file_path = os.path.normpath(file_path)
+
+    for dest, sources in deploy.items():
+        is_dir_mode = dest == "" or dest.endswith("/")
+
+        if is_dir_mode:
+            # sources is list of paths (files or directories with trailing /)
+            if not isinstance(sources, list):
+                continue
+            for src in sources:
+                # Resolve source path relative to project root
+                src_abs = os.path.normpath(os.path.join(root, src))
+                if file_path == src_abs or file_path.startswith(src_abs + os.sep):
+                    # Found matching source
+                    rel_in_source = os.path.relpath(file_path, src_abs)
+                    return (dest, src, rel_in_source)
+        else:
+            # sources is single string (rename mode)
+            if isinstance(sources, str):
+                src_abs = os.path.normpath(os.path.join(root, sources))
+                if file_path == src_abs:
+                    return (dest, sources, '.')
+
+    return None
+
+
+def get_deploy_paths(file_path, project_root, deploy_info):
+    """Calculate local and device paths for single file deploy.
+
+    Args:
+        file_path: Absolute path to file
+        project_root: Absolute path to project root
+        deploy_info: (dest, source, rel_in_source) from is_file_in_deploy
+
+    Returns:
+        (local_path, device_path) for mpytool cp command
+    """
+    dest, source, rel_in_source = deploy_info
+
+    is_dir_mode = dest == "" or dest.endswith("/")
+
+    if not is_dir_mode:
+        # Rename mode - dest is full target path
+        local_path = os.path.relpath(file_path, project_root)
+        return local_path, dest
+
+    # Directory mode
+    # local_path is relative to project root
+    local_path = os.path.relpath(file_path, project_root)
+
+    # device_path: dest + path within source (excluding filename)
+    if rel_in_source == '.':
+        # File is the source itself
+        device_path = dest
+    else:
+        file_dir = os.path.dirname(rel_in_source)
+        if file_dir:
+            device_path = dest + file_dir + '/'
+        else:
+            device_path = dest
+
+    return local_path, device_path
+
+
+def matches_exclude(file_path, mpyproject_path, config):
+    """Check if file matches any exclude pattern."""
+    exclude = config.get('exclude')
+    if not exclude:
+        return False
+
+    root = get_project_root(mpyproject_path)
+    rel_path = os.path.relpath(file_path, root)
+    filename = os.path.basename(file_path)
+
+    for pattern in exclude:
+        # Match against relative path
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True
+        # Match against filename only
+        if fnmatch.fnmatch(filename, pattern):
+            return True
+        # Match against any path component
+        for part in rel_path.split(os.sep):
+            if fnmatch.fnmatch(part, pattern):
+                return True
+
+    return False
+
+
 class MpyEventListener(sublime_plugin.EventListener):
     """Event listener for automatic actions"""
 
     def on_activated(self, view):
         """Update status bar when switching tabs"""
         view.run_command('mpy_update_status')
+
+    def on_post_save_async(self, view):
+        """Deploy file on save if enabled"""
+        file_path = view.file_name()
+        if not file_path or not file_path.endswith('.py'):
+            return
+
+        # Find project
+        mpyproject = find_mpyproject(file_path)
+        if not mpyproject:
+            return
+
+        config = load_mpyproject(mpyproject)
+        if config is None:
+            return
+
+        # Check deploy_on_save setting (project overrides global)
+        if 'deploy_on_save' in config:
+            enabled = config['deploy_on_save']
+        else:
+            settings = sublime.load_settings('mpytool.sublime-settings')
+            enabled = settings.get('deploy_on_save', False)
+
+        if not enabled:
+            return
+
+        # Check if file is in deploy config
+        deploy_info = is_file_in_deploy(file_path, mpyproject, config)
+        if not deploy_info:
+            return
+
+        # Check if file matches exclude
+        if matches_exclude(file_path, mpyproject, config):
+            return
+
+        # Calculate paths
+        root = get_project_root(mpyproject)
+        local_path, device_path = get_deploy_paths(file_path, root, deploy_info)
+
+        # Build command: cp source :dest -- reset -- monitor
+        args = ['cp']
+        if config.get('compile'):
+            args.append('-m')
+        args.append(local_path)
+        args.append(f':{device_path}')
+        args.extend(['--', 'reset', '--', 'monitor'])
+
+        # Run deploy
+        window = view.window()
+        if window:
+            window.run_command('mpy_deploy_file', {
+                'file_path': file_path,
+                'mpyproject': mpyproject,
+                'args': args,
+                'cwd': root
+            })
 
     def on_window_command(self, window, command_name, args):
         """Stop monitor when panel is hidden"""

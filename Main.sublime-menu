@@ -45,19 +45,11 @@
                         "children": [
                             {
                                 "caption": "Settings",
-                                "command": "edit_settings",
-                                "args": {
-                                    "base_file": "${packages}/mpytool/mpytool.sublime-settings",
-                                    "user_file": "${packages}/User/mpytool.sublime-settings",
-                                    "default": "{\n\t$0\n}\n"
-                                }
+                                "command": "mpy_open_settings"
                             },
                             {
                                 "caption": "Key Bindings",
-                                "command": "open_file",
-                                "args": {
-                                    "file": "${packages}/mpytool/Default (${platform}).sublime-keymap"
-                                }
+                                "command": "mpy_open_keybindings"
                             }
                         ]
                     }

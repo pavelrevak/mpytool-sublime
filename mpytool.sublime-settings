@@ -1,3 +1,6 @@
 {
-    "mpytool_path": "mpytool"
+    "mpytool_path": "mpytool",
+    // Automatically deploy file to device on save
+    // Can be overridden per-project with "deploy_on_save" in .mpyproject
+    "deploy_on_save": false
 }
