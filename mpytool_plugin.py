@@ -96,6 +96,61 @@ def detect_ports():
     return []
 
 
+def build_connections(config, detected_ports, force_select=False):
+    """Build connection options from config and detected serial ports.
+
+    Priority (skipped when force_select=True):
+    1. configured `port` is detected -> return only that (use directly)
+    2. configured `address` is set   -> return only that (use directly)
+    3. otherwise return all candidates: configured-but-not-detected port,
+       detected ports, configured `address`, addresses from `addresses` list
+
+    Returns list of (args, primary, secondary) tuples where args is
+    ['-p', name] or ['-a', addr]. Empty list = no connection available.
+    """
+    cfg = config or {}
+    port = cfg.get('port', 'auto')
+    address = cfg.get('address')
+    addresses = cfg.get('addresses') or []
+
+    detected_names = [p[0] for p in detected_ports]
+
+    if not force_select:
+        # Priority 1: selected port is detected -> direct
+        if port and port != 'auto' and port in detected_names:
+            desc = next((d for n, d in detected_ports if n == port), '')
+            return [(
+                ['-p', port], port,
+                f"{desc} (configured)" if desc else "(configured)",
+            )]
+
+        # Priority 2: selected address -> direct
+        if address:
+            return [(['-a', address], address, "(configured network)")]
+
+    # Full candidate list
+    options = []
+    if port and port != 'auto':
+        if port in detected_names:
+            desc = next((d for n, d in detected_ports if n == port), '')
+            options.append((
+                ['-p', port], port,
+                f"{desc} (configured)" if desc else "(configured)",
+            ))
+        else:
+            options.append(
+                (['-p', port], port, "(configured, not detected)"))
+    for name, desc in detected_ports:
+        if name != port:
+            options.append((['-p', name], name, desc))
+    if address:
+        options.append((['-a', address], address, "(configured network)"))
+    for addr in addresses:
+        if addr != address:
+            options.append((['-a', addr], addr, "(network)"))
+    return options
+
+
 class MpyContext:
     """Context for current MicroPython project"""
 
@@ -190,19 +245,10 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
 
         return mpyproject, config
 
-    def get_port(self):
-        """Get port from config or 'auto'"""
+    def get_config(self):
+        """Get config dict for current context, or empty dict"""
         mpyproject, config = self.get_context(required=False)
-        if config:
-            return config.get('port', 'auto')
-        return 'auto'
-
-    def get_address(self):
-        """Get network address from config or None"""
-        mpyproject, config = self.get_context(required=False)
-        if config:
-            return config.get('address')
-        return None
+        return config or {}
 
     def get_panel(self, clear=False):
         """Get or create output panel"""
@@ -235,10 +281,6 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
             self._execute_mpytool(mpytool_path, args, cwd, clear)
             return
 
-        # Get connection from config
-        port = self.get_port()
-        address = self.get_address()
-
         # Detect serial ports
         detected = detect_ports()
         if detected is None:
@@ -247,28 +289,7 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
                 "Install with: pip install mpytool")
             return
 
-        # Build connection options
-        # Format: (args_prefix, label) - args_prefix is ['-a', addr] or ['-p', port]
-        options = []
-
-        if address:
-            options.append((['-a', address], f"{address} (network)"))
-
-        if port != 'auto':
-            detected_names = [p[0] for p in detected]
-            if port in detected_names:
-                # Configured port is detected - add it first
-                options.append((['-p', port], f"{port} (configured)"))
-                for p in detected:
-                    if p[0] != port:
-                        options.append((['-p', p[0]], p[1]))
-            else:
-                # Configured port not detected - add it anyway
-                options.append((['-p', port], f"{port} (configured)"))
-                options.extend([(['-p', p[0]], p[1]) for p in detected])
-        else:
-            # Auto - just detected ports
-            options.extend([(['-p', p[0]], p[1]) for p in detected])
+        options = build_connections(self.get_config(), detected)
 
         if len(options) == 0:
             sublime.error_message("No connection available")
@@ -285,7 +306,7 @@ class MpyToolCommand(sublime_plugin.WindowCommand):
         self._pending_cwd = cwd
         self._pending_clear = clear
         self._connection_options = options
-        items = [[opt[0][1], opt[1]] for opt in options]
+        items = [[opt[1], opt[2]] for opt in options]
         self.window.show_quick_panel(items, self._on_connection_selected)
 
     def _execute_mpytool(self, mpytool_path, args, cwd, clear):
@@ -370,8 +391,6 @@ class MpySyncCommand(MpyToolCommand):
             return
 
         root = get_project_root(mpyproject)
-        port = config.get('port', 'auto')
-        address = config.get('address')
         compile_mpy = config.get('compile', False)
 
         # Show which project is being used
@@ -384,12 +403,6 @@ class MpySyncCommand(MpyToolCommand):
         deploy = config.get('deploy') or {"": ["./"]}
 
         args = []
-
-        # Connection: address takes priority if both are set
-        if address:
-            args.extend(['-a', address])
-        elif port != 'auto':
-            args.extend(['-p', port])
 
         # Add exclude patterns
         exclude = config.get('exclude', [])
@@ -488,13 +501,8 @@ class MpyDeploySelectCommand(MpySyncCommand):
             return
 
         self._selected_project = self._projects[index]
-
-        # Get configured connection
         config = load_mpyproject(self._selected_project)
-        configured_port = config.get('port', 'auto') if config else 'auto'
-        configured_address = config.get('address') if config else None
 
-        # Detect serial ports
         detected = detect_ports()
         if detected is None:
             settings = sublime.load_settings('mpytool.sublime-settings')
@@ -504,27 +512,9 @@ class MpyDeploySelectCommand(MpySyncCommand):
                 "Install with: pip install mpytool")
             return
 
-        # Build connection options: (type, value, label)
-        # type is 'address' or 'port'
-        self._connections = []
-
-        if configured_address:
-            self._connections.append(('address', configured_address, f"{configured_address} (network)"))
-
-        detected_names = [p[0] for p in detected]
-        if configured_port != 'auto':
-            if configured_port in detected_names:
-                self._connections.append(('port', configured_port, f"{configured_port} (configured)"))
-                for p in detected:
-                    if p[0] != configured_port:
-                        self._connections.append(('port', p[0], p[1]))
-            else:
-                self._connections.append(('port', configured_port, f"{configured_port} (configured)"))
-                for p in detected:
-                    self._connections.append(('port', p[0], p[1]))
-        else:
-            for p in detected:
-                self._connections.append(('port', p[0], p[1]))
+        # Force selection menu so the user can pick any connection
+        self._connections = build_connections(
+            config, detected, force_select=True)
 
         if len(self._connections) == 0:
             sublime.error_message("No connection available")
@@ -542,24 +532,25 @@ class MpyDeploySelectCommand(MpySyncCommand):
         self._deploy_with_connection(self._connections[index])
 
     def _deploy_with_connection(self, connection):
-        conn_type, conn_value, _ = connection
+        args, value, _ = connection
 
         # Temporarily set the project context
         MpyContext.set(self.window, self._selected_project)
 
-        # Load config and set connection
+        # Load config and override connection for this deploy
         config = load_mpyproject(self._selected_project)
         if config is None:
             sublime.error_message(f"Invalid JSON in {self._selected_project}")
             return
 
-        # Override connection in config for this deploy
-        if conn_type == 'address':
-            config['address'] = conn_value
-            config.pop('port', None)
+        if args[0] == '-a':
+            config['address'] = value
+            config['port'] = 'auto'
+            config.pop('addresses', None)
         else:
-            config['port'] = conn_value
+            config['port'] = value
             config.pop('address', None)
+            config.pop('addresses', None)
         self._deploy_config = config
 
         self._run_sync(monitor=True)
@@ -736,11 +727,6 @@ class MpyReplCommand(MpyToolCommand):
         settings = sublime.load_settings('mpytool.sublime-settings')
         self._mpytool_path = settings.get('mpytool_path', 'mpytool')
 
-        # Get connection from config
-        port = self.get_port()
-        address = self.get_address()
-
-        # Detect serial ports
         detected = detect_ports()
         if detected is None:
             sublime.error_message(
@@ -748,26 +734,7 @@ class MpyReplCommand(MpyToolCommand):
                 "Install with: pip install mpytool")
             return
 
-        # Build connection options
-        self._connections = []
-
-        if address:
-            self._connections.append(['-a', address, f"{address} (network)"])
-
-        if port != 'auto':
-            detected_names = [p[0] for p in detected]
-            if port in detected_names:
-                self._connections.append(['-p', port, f"{port} (configured)"])
-                for p in detected:
-                    if p[0] != port:
-                        self._connections.append(['-p', p[0], p[1]])
-            else:
-                self._connections.append(['-p', port, f"{port} (configured)"])
-                for p in detected:
-                    self._connections.append(['-p', p[0], p[1]])
-        else:
-            for p in detected:
-                self._connections.append(['-p', p[0], p[1]])
+        self._connections = build_connections(self.get_config(), detected)
 
         if len(self._connections) == 0:
             sublime.error_message("No connection available")
@@ -785,7 +752,8 @@ class MpyReplCommand(MpyToolCommand):
         self._open_repl(self._connections[index])
 
     def _open_repl(self, connection):
-        cmd = [self._mpytool_path, connection[0], connection[1], 'repl']
+        args = connection[0]
+        cmd = [self._mpytool_path] + args + ['repl']
 
         # Try Terminus first
         if self._try_terminus(cmd):
@@ -868,11 +836,6 @@ class MpyChdirCommand(MpyToolCommand):
         settings = sublime.load_settings('mpytool.sublime-settings')
         self._mpytool_path = settings.get('mpytool_path', 'mpytool')
 
-        # Get connection from config
-        port = self.get_port()
-        address = self.get_address()
-
-        # Detect serial ports
         detected = detect_ports()
         if detected is None:
             sublime.error_message(
@@ -880,26 +843,7 @@ class MpyChdirCommand(MpyToolCommand):
                 "Install with: pip install mpytool")
             return
 
-        # Build connection options: [flag, value, label]
-        self._connections = []
-
-        if address:
-            self._connections.append(['-a', address, f"{address} (network)"])
-
-        if port != 'auto':
-            detected_names = [p[0] for p in detected]
-            if port in detected_names:
-                self._connections.append(['-p', port, f"{port} (configured)"])
-                for p in detected:
-                    if p[0] != port:
-                        self._connections.append(['-p', p[0], p[1]])
-            else:
-                self._connections.append(['-p', port, f"{port} (configured)"])
-                for p in detected:
-                    self._connections.append(['-p', p[0], p[1]])
-        else:
-            for p in detected:
-                self._connections.append(['-p', p[0], p[1]])
+        self._connections = build_connections(self.get_config(), detected)
 
         if len(self._connections) == 0:
             sublime.error_message("No connection available")
@@ -922,7 +866,8 @@ class MpyChdirCommand(MpyToolCommand):
         thread.start()
 
     def _get_cwd(self):
-        cmd = [self._mpytool_path, self._connection[0], self._connection[1], 'pwd']
+        conn_args = self._connection[0]
+        cmd = [self._mpytool_path] + conn_args + ['pwd']
 
         try:
             result = subprocess.run(
@@ -945,7 +890,8 @@ class MpyChdirCommand(MpyToolCommand):
         if path is None:
             return
 
-        args = [self._connection[0], self._connection[1], 'cd', f':{path}']
+        conn_args = self._connection[0]
+        args = conn_args + ['cd', f':{path}']
         self._execute_mpytool(self._mpytool_path, args, None, True)
 
     def _execute_mpytool(self, mpytool_path, args, cwd, clear):
@@ -1391,7 +1337,14 @@ class MpySelectProjectCommand(sublime_plugin.WindowCommand):
 
 
 class MpySelectPortCommand(sublime_plugin.WindowCommand):
-    """Select serial port for active project"""
+    """Select connection (serial port or network address) for active project.
+
+    Selecting a port writes `port` and clears `address`.
+    Selecting an address writes `address` and clears `port` (sets to 'auto').
+    Selecting 'auto' clears both `port` and `address`.
+    Selecting '+ Add address...' shows input panel; new address is added to
+    `addresses` list and set as current `address`.
+    """
 
     def run(self):
         view = self.window.active_view()
@@ -1406,37 +1359,95 @@ class MpySelectPortCommand(sublime_plugin.WindowCommand):
             sublime.error_message(f"Invalid JSON in {mpyproject}")
             return
 
+        self._mpyproject = mpyproject
+        self._config = config
+
         current_port = config.get('port', 'auto')
-        ports = detect_ports()
+        current_address = config.get('address')
+        addresses = config.get('addresses') or []
+        ports = detect_ports() or []
 
-        # Build items list
+        # Each item: ('action', payload) where action is one of:
+        #   'auto', 'port', 'address', 'add_address'
         items = []
-        self._ports = ['auto']
+        self._actions = []
 
-        # First option: auto
-        auto_label = "● auto" if current_port == 'auto' else "  auto"
-        items.append([auto_label, "Auto-detect port"])
+        # 1. auto
+        auto_marker = "●" if current_port == 'auto' and not current_address else " "
+        items.append([f"{auto_marker} auto", "Auto-detect port (clear selection)"])
+        self._actions.append(('auto', None))
 
-        # Detected ports
+        # 2. detected ports
+        detected_names = [p[0] for p in ports]
         for port, description in ports:
-            if port == current_port:
-                label = f"● {port}"
-            else:
-                label = f"  {port}"
-            items.append([label, description])
-            self._ports.append(port)
+            marker = "●" if port == current_port else " "
+            items.append([f"{marker} {port}", description])
+            self._actions.append(('port', port))
 
-        def on_select(index):
-            if index < 0:
-                return
+        # 3. configured port not detected
+        if current_port and current_port != 'auto' and current_port not in detected_names:
+            items.append([
+                f"● {current_port}",
+                "(configured, not detected)",
+            ])
+            self._actions.append(('port', current_port))
 
-            selected_port = self._ports[index]
-            config['port'] = selected_port
-            save_mpyproject(mpyproject, config)
+        # 4. addresses
+        all_addresses = list(addresses)
+        if current_address and current_address not in all_addresses:
+            all_addresses.insert(0, current_address)
+        for addr in all_addresses:
+            marker = "●" if addr == current_address else " "
+            items.append([f"{marker} {addr}", "(network)"])
+            self._actions.append(('address', addr))
 
-            sublime.status_message(f"Port set to: {selected_port}")
+        # 5. add new address
+        items.append(["+ Add address...", "Enter new network address (host:port)"])
+        self._actions.append(('add_address', None))
 
-        self.window.show_quick_panel(items, on_select)
+        self.window.show_quick_panel(items, self._on_select)
+
+    def _on_select(self, index):
+        if index < 0:
+            return
+
+        action, payload = self._actions[index]
+
+        if action == 'auto':
+            self._config['port'] = 'auto'
+            self._config.pop('address', None)
+            self._save(f"Connection: auto")
+        elif action == 'port':
+            self._config['port'] = payload
+            self._config.pop('address', None)
+            self._save(f"Port set to: {payload}")
+        elif action == 'address':
+            self._config['port'] = 'auto'
+            self._config['address'] = payload
+            self._save(f"Address set to: {payload}")
+        elif action == 'add_address':
+            self.window.show_input_panel(
+                "New address (host:port):",
+                "",
+                self._on_add_address,
+                None,
+                None)
+
+    def _on_add_address(self, addr):
+        addr = addr.strip()
+        if not addr:
+            return
+        addresses = self._config.get('addresses') or []
+        if addr not in addresses:
+            addresses.append(addr)
+        self._config['addresses'] = addresses
+        self._config['port'] = 'auto'
+        self._config['address'] = addr
+        self._save(f"Address added and selected: {addr}")
+
+    def _save(self, message):
+        save_mpyproject(self._mpyproject, self._config)
+        sublime.status_message(message)
 
     def is_enabled(self):
         view = self.window.active_view()

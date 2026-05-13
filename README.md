@@ -74,7 +74,7 @@ All commands available via Command Palette (`Cmd+Shift+P`) with `MPY:` prefix.
 | **New Project...** | Create `.mpyproject` file |
 | **Project Settings** | Open `.mpyproject` for editing |
 | **Select Project...** | Choose active project |
-| **Select Port...** | Choose serial port for project |
+| **Select Connection...** | Choose serial port or network address for project |
 | **Stop** | Stop running process |
 
 ## Keyboard Shortcuts
@@ -117,10 +117,14 @@ Create `.mpyproject` in your project root:
 | Field | Description |
 |-------|-------------|
 | `name` | Project name (shown in status bar) |
-| `port` | Serial port or `"auto"` for auto-detection |
+| `port` | Selected serial port or `"auto"` for auto-detection |
+| `address` | Selected network address `host:port` (WebREPL) |
+| `addresses` | List of available network addresses for selection menu |
 | `compile` | Compile .py to .mpy before upload (requires mpy-cross) |
 | `deploy` | Map of device paths → local sources |
 | `exclude` | Patterns to exclude from upload |
+
+**Connection priority:** if `port` is set and currently detected, it is used directly. Otherwise if `address` is set, it is used directly. Otherwise a selection menu is shown with all detected ports plus `addresses`.
 
 ### Deploy Format
 

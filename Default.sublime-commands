@@ -17,7 +17,7 @@
     {"caption": "MPY: Open REPL", "command": "mpy_repl"},
     {"caption": "MPY: Stop", "command": "mpy_stop"},
     {"caption": "MPY: Select Project...", "command": "mpy_select_project"},
-    {"caption": "MPY: Select Port...", "command": "mpy_select_port"},
+    {"caption": "MPY: Select Connection...", "command": "mpy_select_port"},
     {"caption": "Preferences: MpyTool Settings", "command": "mpy_open_settings"},
     {"caption": "Preferences: MpyTool Key Bindings", "command": "mpy_open_keybindings"}
 ]

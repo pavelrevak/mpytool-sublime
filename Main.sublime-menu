@@ -27,7 +27,7 @@
                     {"caption": "-"},
                     {"caption": "Stop", "command": "mpy_stop"},
                     {"caption": "Select Project...", "command": "mpy_select_project"},
-                    {"caption": "Select Port...", "command": "mpy_select_port"}
+                    {"caption": "Select Connection...", "command": "mpy_select_port"}
                 ]
             }
         ]
